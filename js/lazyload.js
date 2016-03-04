@@ -65,12 +65,11 @@ Flickity.prototype.lazyLoad = function() {
 
 function getCellLazyImages( cellElem ) {
   // check if cell element is lazy image
-  if ( cellElem.nodeName == 'IMG' &&
-    cellElem.getAttribute('data-flickity-lazyload') ) {
+  if ( cellElem.getAttribute('data-flickity-lazyload') ) {
     return [ cellElem ];
   }
   // select lazy images in cell
-  var imgs = cellElem.querySelectorAll('img[data-flickity-lazyload]');
+  var imgs = cellElem.querySelectorAll('[data-flickity-lazyload]');
   return utils.makeArray( imgs );
 }
 
@@ -81,6 +80,11 @@ function getCellLazyImages( cellElem ) {
  */
 function LazyLoader( img, flickity ) {
   this.img = img;
+  if(img.nodeName != 'IMG') {
+    this.fauximg = new Image(); // so we can bind load & error events in .load() 
+                                // and keep the loading chain so that the class flickity-lazyloaded or flickity-lazyerror
+                                // is set on the element with the background image
+  }  
   this.flickity = flickity;
   this.load();
 }
@@ -88,10 +92,21 @@ function LazyLoader( img, flickity ) {
 LazyLoader.prototype.handleEvent = utils.handleEvent;
 
 LazyLoader.prototype.load = function() {
-  eventie.bind( this.img, 'load', this );
-  eventie.bind( this.img, 'error', this );
+  if(this.img.nodeName != 'IMG') {
+    eventie.bind( this.fauximg, 'load', this );
+    eventie.bind( this.fauximg, 'error', this );
+  } else {
+    eventie.bind( this.img, 'load', this );
+    eventie.bind( this.img, 'error', this );
+  }
   // load image
-  this.img.src = this.img.getAttribute('data-flickity-lazyload');
+  var imgSrc = this.img.getAttribute('data-flickity-lazyload');
+  if(this.img.nodeName != 'IMG') {
+    this.img.style.backgroundImage = 'url("' + imgSrc + '")';
+    this.fauximg.src = imgSrc;
+  } else {
+    this.img.src = imgSrc;
+  }
   // remove attr
   this.img.removeAttribute('data-flickity-lazyload');
 };
@@ -106,8 +121,13 @@ LazyLoader.prototype.onerror = function( event ) {
 
 LazyLoader.prototype.complete = function( event, className ) {
   // unbind events
-  eventie.unbind( this.img, 'load', this );
-  eventie.unbind( this.img, 'error', this );
+  if(this.img.nodeName != 'IMG') {
+    eventie.unbind( this.fauximg, 'load', this );
+    eventie.unbind( this.fauximg, 'error', this );
+  } else {
+    eventie.unbind( this.img, 'load', this );
+    eventie.unbind( this.img, 'error', this );
+  }
 
   var cell = this.flickity.getParentCell( this.img );
   var cellElem = cell && cell.element;

@@ -3726,7 +3726,7 @@ return Flickity;
 }));
 
 /*!
- * Tap listener v1.1.1
+ * Tap listener v1.1.2
  * listens to taps
  * MIT license
  */
@@ -3734,9 +3734,8 @@ return Flickity;
 /*jshint browser: true, unused: true, undef: true, strict: true */
 
 ( function( window, factory ) {
-  /*global define: false, module: false, require: false */
-  'use strict';
   // universal module definition
+  /*jshint strict: false*/ /*globals define, module, require */
 
   if ( typeof define == 'function' && define.amd ) {
     // AMD
@@ -3762,15 +3761,6 @@ return Flickity;
 }( window, function factory( window, Unipointer ) {
 
 
-
-// handle IE8 prevent default
-function preventDefaultEvent( event ) {
-  if ( event.preventDefault ) {
-    event.preventDefault();
-  } else {
-    event.returnValue = false;
-  }
-}
 
 // --------------------------  TapListener -------------------------- //
 
@@ -3802,16 +3792,6 @@ TapListener.prototype.unbindTap = function() {
   delete this.tapElement;
 };
 
-var pointerDown = TapListener.prototype.pointerDown;
-
-TapListener.prototype.pointerDown = function( event ) {
-  // prevent default event for touch, disables tap then click
-  if ( event.type == 'touchstart' ) {
-    preventDefaultEvent( event );
-  }
-  pointerDown.apply( this, arguments );
-};
-
 var isPageOffset = window.pageYOffset !== undefined;
 /**
  * pointer up
@@ -3819,6 +3799,11 @@ var isPageOffset = window.pageYOffset !== undefined;
  * @param {Event or Touch} pointer
  */
 TapListener.prototype.pointerUp = function( event, pointer ) {
+  // ignore emulated mouse up clicks
+  if ( this.isIgnoringMouseUp && event.type == 'mouseup' ) {
+    return;
+  }
+
   var pointerPoint = Unipointer.getPointerPoint( pointer );
   var boundingRect = this.tapElement.getBoundingClientRect();
   // standard or IE8 scroll positions
@@ -3832,6 +3817,15 @@ TapListener.prototype.pointerUp = function( event, pointer ) {
   // trigger callback if pointer is inside element
   if ( isInside ) {
     this.emitEvent( 'tap', [ event, pointer ] );
+  }
+
+  // set flag for emulated clicks 300ms after touchend
+  if ( event.type != 'mouseup' ) {
+    this.isIgnoringMouseUp = true;
+    // reset flag after 300ms
+    setTimeout( function() {
+      delete this.isIgnoringMouseUp;
+    }.bind( this ), 320 );
   }
 };
 
@@ -3929,6 +3923,8 @@ PrevNextButton.prototype._create = function() {
   element.setAttribute( 'type', 'button' );
   // init as disabled
   this.disable();
+
+  element.setAttribute( 'aria-label', this.isPrevious ? 'previous' : 'next' );
 
   Flickity.setUnselectable( element );
   // create arrow
@@ -4449,8 +4445,22 @@ Flickity.prototype.activatePlayer = function() {
   this.isMouseenterBound = true;
 };
 
+// Player API, don't hate the ... thanks I know where the door is
+
+Flickity.prototype.playPlayer = function() {
+  this.player.play();
+};
+
 Flickity.prototype.stopPlayer = function() {
   this.player.stop();
+};
+
+Flickity.prototype.pausePlayer = function() {
+  this.player.pause();
+};
+
+Flickity.prototype.unpausePlayer = function() {
+  this.player.unpause();
 };
 
 Flickity.prototype.deactivatePlayer = function() {
@@ -4646,7 +4656,8 @@ Flickity.prototype.cellChange = function( changedCellIndex, isPositioningSlider 
   if ( this.options.freeScroll ) {
     // shift x by change in slideableWidth
     // TODO fix position shifts when prepending w/ freeScroll
-    this.x += prevSlideableWidth - this.slideableWidth;
+    var deltaX = prevSlideableWidth - this.slideableWidth;
+    this.x += deltaX * this.cellAlign;
     this.positionSlider();
   } else {
     // do not position slider after lazy load
@@ -4730,12 +4741,11 @@ Flickity.prototype.lazyLoad = function() {
 
 function getCellLazyImages( cellElem ) {
   // check if cell element is lazy image
-  if ( cellElem.nodeName == 'IMG' &&
-    cellElem.getAttribute('data-flickity-lazyload') ) {
+  if ( cellElem.getAttribute('data-flickity-lazyload') ) {
     return [ cellElem ];
   }
   // select lazy images in cell
-  var imgs = cellElem.querySelectorAll('img[data-flickity-lazyload]');
+  var imgs = cellElem.querySelectorAll('[data-flickity-lazyload]');
   return utils.makeArray( imgs );
 }
 
@@ -4746,6 +4756,11 @@ function getCellLazyImages( cellElem ) {
  */
 function LazyLoader( img, flickity ) {
   this.img = img;
+  if(img.nodeName != 'IMG') {
+    this.fauximg = new Image(); // so we can bind load & error events in .load() 
+                                // and keep the loading chain so that the class flickity-lazyloaded or flickity-lazyerror
+                                // is set on the element with the background image
+  }  
   this.flickity = flickity;
   this.load();
 }
@@ -4753,10 +4768,21 @@ function LazyLoader( img, flickity ) {
 LazyLoader.prototype.handleEvent = utils.handleEvent;
 
 LazyLoader.prototype.load = function() {
-  eventie.bind( this.img, 'load', this );
-  eventie.bind( this.img, 'error', this );
+  if(this.img.nodeName != 'IMG') {
+    eventie.bind( this.fauximg, 'load', this );
+    eventie.bind( this.fauximg, 'error', this );
+  } else {
+    eventie.bind( this.img, 'load', this );
+    eventie.bind( this.img, 'error', this );
+  }
   // load image
-  this.img.src = this.img.getAttribute('data-flickity-lazyload');
+  var imgSrc = this.img.getAttribute('data-flickity-lazyload');
+  if(this.img.nodeName != 'IMG') {
+    this.img.style.backgroundImage = 'url("' + imgSrc + '")';
+    this.fauximg.src = imgSrc;
+  } else {
+    this.img.src = imgSrc;
+  }
   // remove attr
   this.img.removeAttribute('data-flickity-lazyload');
 };
@@ -4771,8 +4797,13 @@ LazyLoader.prototype.onerror = function( event ) {
 
 LazyLoader.prototype.complete = function( event, className ) {
   // unbind events
-  eventie.unbind( this.img, 'load', this );
-  eventie.unbind( this.img, 'error', this );
+  if(this.img.nodeName != 'IMG') {
+    eventie.unbind( this.fauximg, 'load', this );
+    eventie.unbind( this.fauximg, 'error', this );
+  } else {
+    eventie.unbind( this.img, 'load', this );
+    eventie.unbind( this.img, 'error', this );
+  }
 
   var cell = this.flickity.getParentCell( this.img );
   var cellElem = cell && cell.element;
@@ -4789,7 +4820,6 @@ Flickity.LazyLoader = LazyLoader;
 return Flickity;
 
 }));
-
 /*!
  * Flickity v1.1.2
  * Touch, responsive, flickable galleries
